@@ -28,12 +28,14 @@ from .linopt import (linexpr, write_bound, write_constraint, write_objective,
                      run_and_read_cbc, run_and_read_gurobi, run_and_read_glpk,
                      run_and_read_cplex, run_and_read_xpress,
                      define_constraints, define_variables, define_binaries,
-                     align_with_static_component)
+                     align_with_static_component, set_int_index)
 
 
 import pandas as pd
 import numpy as np
 from numpy import inf
+
+from importlib.util import find_spec
 
 import gc, time, os, re, shutil
 from tempfile import mkstemp
@@ -601,7 +603,7 @@ def define_objective(n, sns):
         write_objective(n, terms)
 
 
-def prepare_lopf(n, snapshots=None, keep_files=False, skip_objective=False,
+def network_lopf_build_lp_file(n, snapshots=None, keep_files=False, skip_objective=False,
                  extra_functionality=None, solver_dir=None):
     """
     Sets up the linear problem and writes it out to a lp file.
@@ -612,6 +614,8 @@ def prepare_lopf(n, snapshots=None, keep_files=False, skip_objective=False,
     the lp file
 
     """
+    logger.info("Prepare linear problem")
+
     n._xCounter, n._cCounter = 1, 1
     n.vars, n.cons = Dict(), Dict()
 
@@ -684,12 +688,54 @@ def prepare_lopf(n, snapshots=None, keep_files=False, skip_objective=False,
         for f in [objective_fn, constraints_fn, bounds_fn, binaries_fn]:
             with open(f,'rb') as fd:
                 shutil.copyfileobj(fd, wfd)
-            if not keep_files:
                 os.remove(f)
 
     logger.info(f'Total preparation time: {round(time.time()-start, 2)}s')
     return fdp, problem_fn
 
+def network_lopf_build_model_and_solver_pythonmip(n, 
+                        solver_options,
+                        problem_fn):
+    """
+    # Solving function. Reads the linear problem file, 
+    # and passes it to the gurobi or cbc solver. If the solution is sucessful it 
+    # returns variable solutions, constraint dual values and the model. 
+    # Python-MIP calls directly the native dynamic loadable library 
+    # of the installed solver engine using cffi and their creation/modification routines. 
+    # Models are efficiently stored and optimized by the solver.
+
+    For more information about solver options:
+    e.g. [threads, lp_method, opt_tol, verbose]
+    https://docs.python-mip.com/en/latest/classes.html 
+    """
+    if find_spec('mip') is None:
+        raise ModuleNotFoundError("Optional dependency 'mip' not found. "
+           "Install via 'pip install mip'  or follow the "
+           "instructions on the documentation page "
+           "https://docs.python-mip.com/en/latest/install.html")
+    from mip import Model
+    # disable logging for this part, as output is doubled otherwise
+    logging.disable(50)
+
+    m = Model() # pythonmip searches and uses gurobi or cbc. It is shipped with CBC binaries.
+    m.read(problem_fn)
+
+    if solver_options is not None:
+        for param, value in solver_options.items(): # add solver_options["lp_method"] = LP_Method.BARRIER for barrier
+            setattr(m, param, value)
+
+        for param, value in solver_options.items(): # overwrites previous settings; reference: mip.gurobi.SolverGurobi  
+            try:
+                m.solver.set_int_param(param, value)
+            except:
+                continue
+    # if solver_logfile is not None:
+    #     m.setParam("logfile", solver_logfile)
+
+    # if warmstart:
+    #     m.read(warmstart)
+    
+    n.model = m
 
 def assign_solution(n, sns, variables_sol, constraints_dual,
                     keep_references=False, keep_shadowprices=None):
@@ -843,13 +889,68 @@ def assign_solution(n, sns, variables_sol, constraints_dual,
                                   axis=1)
                       .reindex(columns=n.buses.index, fill_value=0))
 
+def network_lopf_solve_pythonmip(n, snapshots, solution_fn, solver_logfile,
+                        solver_options, warmstart=None, store_basis=True,
+                        keep_model=False, keep_references=False,
+                    keep_shadowprices=False):
+    """
+    Solve linear optimal power flow and extract results.
+    """
 
-def network_lopf(n, snapshots=None, solver_name="cbc",
+    snapshots = _as_snapshots(n, snapshots)
+
+    from mip import OptimizationStatus
+
+    m = n.model
+
+    termination_condition = m.optimize()
+    logging.disable(1)
+
+    if termination_condition == OptimizationStatus.OPTIMAL:
+        status = 'ok'
+        termination_condition = "optimal"
+    else:
+        status = "warning"
+
+    variables_sol = pd.Series({v.name: v.x for v
+                               in m.vars}).pipe(set_int_index)
+    try:
+        constraints_dual = pd.Series({c.name: c.pi for c in
+                                      m.constrs}).pipe(set_int_index)
+    except AttributeError:
+        logger.warning("Shadow prices of MILP couldn't be parsed")
+        constraints_dual = pd.Series(index=[c.name for c in m.constrs])
+    objective = m.objective_value
+
+    if not keep_model: 
+        del n.model
+    else:
+        n.model = m
+
+    n.objective = objective
+
+    assign_solution(n, snapshots, variables_sol, constraints_dual,
+                        keep_references=keep_references,
+                        keep_shadowprices=keep_shadowprices)
+
+    if status == "ok" and termination_condition == "optimal":
+        logger.info('Optimization successful. Objective value: {:.2e}'.format(objective))
+    elif status == "warning" and termination_condition == "suboptimal":
+        logger.warning('Optimization solution is sub-optimal. '
+                       'Objective value: {:.2e}'.format(objective))
+    else:
+        logger.warning(f'Optimization failed with status {status} and '
+                       f'termination condition {termination_condition}')
+
+    return (status, termination_condition)
+
+def network_lopf(n, snapshots=None, solver_io="linopt", solver_name="cbc",
          solver_logfile=None, extra_functionality=None, skip_objective=False,
          skip_pre=False, extra_postprocessing=None, formulation="kirchhoff",
          keep_references=False, keep_files=False,
          keep_shadowprices=['Bus', 'Line', 'Transformer', 'Link', 'GlobalConstraint'],
-         solver_options=None, warmstart=False, store_basis=False,
+         solver_options=None, warmstart=False, store_basis=False, 
+         keep_model=False, update_params_functionality=None,
          solver_dir=None):
     """
     Linear optimal power flow for a group of snapshots.
@@ -862,9 +963,8 @@ def network_lopf(n, snapshots=None, solver_name="cbc",
     solver_name : string
         Must be a solver name that pyomo recognises and that is
         installed, e.g. "glpk", "gurobi"
-    pyomo : bool, default True
-        Whether to use pyomo for building and solving the model, setting
-        this to False saves a lot of memory and time.
+    solver_io : string or None
+        None or "pythonmip"
     solver_logfile : None|string
         If not None, sets the logfile option of the solver.
     solver_options : dictionary
@@ -930,46 +1030,66 @@ def network_lopf(n, snapshots=None, solver_name="cbc",
         "start up costs, shut down costs will be ignored.")
 
     snapshots = _as_snapshots(n, snapshots)
+
     if not skip_pre:
         n.calculate_dependent_values()
         n.determine_network_topology()
 
-    logger.info("Prepare linear problem")
-    fdp, problem_fn = prepare_lopf(n, snapshots, keep_files, skip_objective,
-                                   extra_functionality, solver_dir)
+    fdp, problem_fn = network_lopf_build_lp_file(
+        n, snapshots, 
+        keep_files, 
+        skip_objective,
+        extra_functionality, 
+        solver_dir)
+        
     fds, solution_fn = mkstemp(prefix='pypsa-solve', suffix='.sol', dir=solver_dir)
 
     if warmstart == True:
         warmstart = n.basis_fn
-        logger.info("Solve linear problem using warmstart")
+        logger.info("Solve linear problem using warmstart")      
+
+    if solver_io=="pythonmip":
+        logger.info(f"Solve linear problem using {solver_name.title()} solver and the {solver_io} interface")
+
+        network_lopf_build_model_and_solver_pythonmip(n, solver_options, problem_fn)
+
+        status, termination_condition = network_lopf_solve_pythonmip(n, snapshots,
+                    solution_fn, solver_logfile,
+                    solver_options, warmstart, store_basis, keep_model,
+                    keep_references=keep_references,
+                    keep_shadowprices=keep_shadowprices) # this also assigns results
+
+    elif solver_io==None:
+        logger.info(f"Solve linear problem using {solver_name.title()}")
+
+        res = eval(f'run_and_read_{solver_name}')(n, 
+                problem_fn, solution_fn, solver_logfile,
+                solver_options, warmstart, store_basis, keep_model) 
+        
+        status, termination_condition, variables_sol, constraints_dual, obj = res
+
+        n.objective = obj
+        assign_solution(n, snapshots, variables_sol, constraints_dual,
+                        keep_references=keep_references,
+                        keep_shadowprices=keep_shadowprices)
+       
+        if status == "ok" and termination_condition == "optimal":
+            logger.info('Optimization successful. Objective value: {:.2e}'.format(obj))
+        elif status == "warning" and termination_condition == "suboptimal":
+            logger.warning('Optimization solution is sub-optimal. '
+                        'Objective value: {:.2e}'.format(obj))
+        else:
+            logger.warning(f'Optimization failed with status {status} and '
+                        f'termination condition {termination_condition}')
     else:
-        logger.info(f"Solve linear problem using {solver_name.title()} solver")
-
-    solve = eval(f'run_and_read_{solver_name}')
-    res = solve(n, problem_fn, solution_fn, solver_logfile,
-                solver_options, warmstart, store_basis)
-
-    status, termination_condition, variables_sol, constraints_dual, obj = res
+        raise KeyError("solver_io must be None or 'pythonmip'")
 
     if not keep_files:
         os.close(fdp); os.remove(problem_fn)
         os.close(fds); os.remove(solution_fn)
 
-    if status == "ok" and termination_condition == "optimal":
-        logger.info('Optimization successful. Objective value: {:.2e}'.format(obj))
-    elif status == "warning" and termination_condition == "suboptimal":
-        logger.warning('Optimization solution is sub-optimal. '
-                       'Objective value: {:.2e}'.format(obj))
-    else:
-        logger.warning(f'Optimization failed with status {status} and '
-                       f'termination condition {termination_condition}')
-        return status, termination_condition
-
-    n.objective = obj
-    assign_solution(n, snapshots, variables_sol, constraints_dual,
-                    keep_references=keep_references,
-                    keep_shadowprices=keep_shadowprices)
-    gc.collect()
+    if not solver_io=="pythonmip" or not keep_files: 
+        gc.collect()
 
     return status,termination_condition
 

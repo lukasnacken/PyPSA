@@ -20,6 +20,7 @@ import numpy as np
 from pandas import IndexSlice as idx
 from importlib.util import find_spec
 
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -155,7 +156,7 @@ def define_constraints(n, lhs, sense, rhs, name, attr='', axes=None, spec=''):
     during the first 10 snapshots. We then firstly get all operational variables
     for this subset and constraint there sum to less equal 100.
 
-    >>> from pypsa.linopt import get_var, linexpr, defin_constraints
+    >>> from pypsa.linopt import get_var, linexpr, define_constraints
     >>> gas_i = n.generators.query('carrier == "Natural Gas"').index
     >>> gas_vars = get_var(n, 'Generator', 'p').loc[n.snapshots[:10], gas_i]
     >>> lhs = linexpr((1, gas_vars)).sum().sum()
@@ -164,7 +165,7 @@ def define_constraints(n, lhs, sense, rhs, name, attr='', axes=None, spec=''):
     Now the constraint references can be accessed by
     :func:`pypsa.linopt.get_con` using
 
-    >>> cons = get_var(n, 'Generator', 'gas_power_limit')
+    >>> cons = get_con(n, 'Generator', 'gas_power_limit')
 
     Under the hook they are stored in n.cons.Generator.pnl.gas_power_limit.
     For retrieving their shadow prices add the general name of the constraint
@@ -554,7 +555,8 @@ def set_int_index(ser):
     return ser
 
 def run_and_read_cbc(n, problem_fn, solution_fn, solver_logfile,
-                     solver_options, warmstart=None, store_basis=True):
+                     solver_options, warmstart=None, store_basis=True,
+                     keep_model=False):
     """
     Solving function. Reads the linear problem file and passes it to the cbc
     solver. If the solution is sucessful it returns variable solutions and
@@ -605,12 +607,15 @@ def run_and_read_cbc(n, problem_fn, solution_fn, solver_logfile,
     variables_sol = sol[variables_b][2].pipe(set_int_index)
     constraints_dual = sol[~variables_b][3].pipe(set_int_index)
 
+    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
+
     return (status, termination_condition, variables_sol,
             constraints_dual, objective)
 
 
 def run_and_read_glpk(n, problem_fn, solution_fn, solver_logfile,
-                     solver_options, warmstart=None, store_basis=True):
+                     solver_options, warmstart=None, store_basis=True,
+                     keep_model=False):
     """
     Solving function. Reads the linear problem file and passes it to the glpk
     solver. If the solution is sucessful it returns variable solutions and
@@ -672,12 +677,15 @@ def run_and_read_glpk(n, problem_fn, solution_fn, solver_logfile,
                      ['Activity'].astype(float).pipe(set_int_index))
     f.close()
 
+    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
+
     return (status, termination_condition, variables_sol,
             constraints_dual, objective)
 
 
 def run_and_read_cplex(n, problem_fn, solution_fn, solver_logfile,
-                        solver_options, warmstart=None, store_basis=True):
+                        solver_options, warmstart=None, store_basis=True,
+                        keep_model=False):
     """
     Solving function. Reads the linear problem file and passes it to the cplex
     solver. If the solution is sucessful it returns variable solutions and
@@ -728,13 +736,17 @@ def run_and_read_cplex(n, problem_fn, solution_fn, solver_logfile,
         logger.warning("Shadow prices of MILP couldn't be parsed")
         constraints_dual = pd.Series(index=m.linear_constraints.get_names())\
                              .pipe(set_int_index)
+
+    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
+                        
     del m
     return (status, termination_condition, variables_sol, constraints_dual,
             objective)
 
 
 def run_and_read_gurobi(n, problem_fn, solution_fn, solver_logfile,
-                        solver_options, warmstart=None, store_basis=True):
+                        solver_options, warmstart=None, store_basis=True,
+                        keep_model=False):
     """
     Solving function. Reads the linear problem file and passes it to the gurobi
     solver. If the solution is sucessful it returns variable solutions and
@@ -801,6 +813,9 @@ def run_and_read_gurobi(n, problem_fn, solution_fn, solver_logfile,
         logger.warning("Shadow prices of MILP couldn't be parsed")
         constraints_dual = pd.Series(index=[c.ConstrName for c in m.getConstrs()])
     objective = m.ObjVal
+
+    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
+
     del m
     return (status, termination_condition, variables_sol,
             constraints_dual, objective)
@@ -808,7 +823,8 @@ def run_and_read_gurobi(n, problem_fn, solution_fn, solver_logfile,
 
 def run_and_read_xpress(n, problem_fn, solution_fn, solver_logfile,
                         solver_options, keep_files, warmstart=None,
-                        store_basis=True):
+                        store_basis=True,
+                        keep_model=False):
     """
     Solving function. Reads the linear problem file and passes it to
     the Xpress solver. If the solution is successful it returns
@@ -870,6 +886,8 @@ def run_and_read_xpress(n, problem_fn, solution_fn, solver_logfile,
         constraints_dual = pd.Series(index=dual).pipe(set_int_index)
 
     objective = m.getObjVal()
+
+    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
 
     del m
 
