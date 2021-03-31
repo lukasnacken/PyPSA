@@ -944,7 +944,7 @@ def network_lopf_solve_pythonmip(n, snapshots, solution_fn, solver_logfile,
 
     return (status, termination_condition)
 
-def network_lopf(n, snapshots=None, solver_io="linopt", solver_name="cbc",
+def network_lopf(n, snapshots=None, solver_io=None, solver_name="cbc",
          solver_logfile=None, extra_functionality=None, skip_objective=False,
          skip_pre=False, extra_postprocessing=None, formulation="kirchhoff",
          keep_references=False, keep_files=False,
@@ -963,7 +963,7 @@ def network_lopf(n, snapshots=None, solver_io="linopt", solver_name="cbc",
     solver_name : string
         Must be a solver name that pyomo recognises and that is
         installed, e.g. "glpk", "gurobi"
-    solver_io : string or None
+    solver_io : string
         None or "pythonmip"
     solver_logfile : None|string
         If not None, sets the logfile option of the solver.
