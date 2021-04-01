@@ -724,12 +724,18 @@ def network_lopf_build_model_and_solver_pythonmip(n,
         for param, value in solver_options.items(): # add solver_options["lp_method"] = LP_Method.BARRIER for barrier
             setattr(m, param, value)
 
+        # adds gurobi parameters. 
+        # NB: n.model.optimize() overwrites the Gurobi Settings: 
+        #   Method, Thread, Seed, PoolSolutions, MIPGap, MIPGapAbs, ...
         for param, value in solver_options.items(): # overwrites previous settings; reference: mip.gurobi.SolverGurobi  
             try:
-                m.solver.set_int_param(param, value)
+                n.model.solver.set_int_param(param, value)
             except:
-                continue
-    # if solver_logfile is not None:
+                try:
+                    n.model.solver.set_dbl_param(param, value)
+                except:
+                    print(f"Error setting the gurobi solver options: {param}, {value}")
+            # if solver_logfile is not None:
     #     m.setParam("logfile", solver_logfile)
 
     # if warmstart:
@@ -950,7 +956,7 @@ def network_lopf(n, snapshots=None, solver_io=None, solver_name="cbc",
          keep_references=False, keep_files=False,
          keep_shadowprices=['Bus', 'Line', 'Transformer', 'Link', 'GlobalConstraint'],
          solver_options=None, warmstart=False, store_basis=False, 
-         keep_model=False, update_params_functionality=None,
+         keep_model=False,
          solver_dir=None):
     """
     Linear optimal power flow for a group of snapshots.
