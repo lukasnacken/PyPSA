@@ -677,7 +677,8 @@ def run_and_read_glpk(n, problem_fn, solution_fn, solver_logfile,
                      ['Activity'].astype(float).pipe(set_int_index))
     f.close()
 
-    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
+    if keep_model: 
+        logger.warning(f"Not implemented yet: Please use solver_io='pythonmip'")
 
     return (status, termination_condition, variables_sol,
             constraints_dual, objective)
@@ -737,7 +738,8 @@ def run_and_read_cplex(n, problem_fn, solution_fn, solver_logfile,
         constraints_dual = pd.Series(index=m.linear_constraints.get_names())\
                              .pipe(set_int_index)
 
-    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
+    if keep_model: 
+        logger.warning(f"Not implemented yet: Please use solver_io='pythonmip'")
                         
     del m
     return (status, termination_condition, variables_sol, constraints_dual,
@@ -814,7 +816,8 @@ def run_and_read_gurobi(n, problem_fn, solution_fn, solver_logfile,
         constraints_dual = pd.Series(index=[c.ConstrName for c in m.getConstrs()])
     objective = m.ObjVal
 
-    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
+    if keep_model: 
+        logger.warning(f"Not implemented yet: Please use solver_io='pythonmip'")
 
     del m
     return (status, termination_condition, variables_sol,
@@ -887,7 +890,8 @@ def run_and_read_xpress(n, problem_fn, solution_fn, solver_logfile,
 
     objective = m.getObjVal()
 
-    if keep_model: raise NotImplementedError(f"Please use solver_io='pythonmip'")
+    if keep_model: 
+        logger.warning(f"Not implemented yet: Please use solver_io='pythonmip'")
 
     del m
 

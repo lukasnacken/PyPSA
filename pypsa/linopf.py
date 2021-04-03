@@ -721,13 +721,14 @@ def network_lopf_build_model_and_solver_pythonmip(n,
     m.read(problem_fn)
 
     if solver_options is not None:
-        for param, value in solver_options.items(): # add solver_options["lp_method"] = LP_Method.BARRIER for barrier
-            setattr(m, param, value)
 
-        # adds gurobi parameters. 
-        # NB: n.model.optimize() overwrites the Gurobi Settings: 
-        #   Method, Thread, Seed, PoolSolutions, MIPGap, MIPGapAbs, ...
         for param, value in solver_options.items(): # overwrites previous settings; reference: mip.gurobi.SolverGurobi  
+            setattr(m, param, value) # add solver_options["lp_method"] = LP_Method.BARRIER for barrier
+            
+            # add gurobi parameters to gurobi solver instance. 
+            # NB: n.model.optimize() overwrites the Gurobi Settings: 
+            # Method, Thread, Seed, PoolSolutions, MIPGap, MIPGapAbs, ...
+            
             try:
                 n.model.solver.set_int_param(param, value)
             except:
