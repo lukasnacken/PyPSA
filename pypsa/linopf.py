@@ -715,25 +715,23 @@ def network_lopf_build_model_and_solver_pythonmip(n,
            "https://docs.python-mip.com/en/latest/install.html")
     from mip import Model
     # disable logging for this part, as output is doubled otherwise
-    logging.disable(50)
+    #logging.disable(50)
 
     m = Model() # pythonmip searches and uses gurobi or cbc. It is shipped with CBC binaries.
     m.read(problem_fn)
 
     if solver_options is not None:
-
         for param, value in solver_options.items(): # overwrites previous settings; reference: mip.gurobi.SolverGurobi  
             setattr(m, param, value) # add solver_options["lp_method"] = LP_Method.BARRIER for barrier
             
             # add gurobi parameters to gurobi solver instance. 
-            # NB: n.model.optimize() overwrites the Gurobi Settings: 
+            # NB: m.optimize() overwrites the Gurobi Settings: 
             # Method, Thread, Seed, PoolSolutions, MIPGap, MIPGapAbs, ...
-            
             try:
-                n.model.solver.set_int_param(param, value)
+                m.solver.set_int_param(param, value)
             except:
                 try:
-                    n.model.solver.set_dbl_param(param, value)
+                    m.solver.set_dbl_param(param, value)
                 except:
                     print(f"Error setting the gurobi solver options: {param}, {value}")
             # if solver_logfile is not None:
@@ -929,16 +927,12 @@ def network_lopf_solve_pythonmip(n, snapshots, solution_fn, solver_logfile,
         constraints_dual = pd.Series(index=[c.name for c in m.constrs])
     objective = m.objective_value
 
-    if not keep_model: 
-        del n.model
-    else:
+    if keep_model: 
         n.model = m
+    else:
+        del n.model
 
     n.objective = objective
-
-    assign_solution(n, snapshots, variables_sol, constraints_dual,
-                        keep_references=keep_references,
-                        keep_shadowprices=keep_shadowprices)
 
     if status == "ok" and termination_condition == "optimal":
         logger.info('Optimization successful. Objective value: {:.2e}'.format(objective))
@@ -948,6 +942,10 @@ def network_lopf_solve_pythonmip(n, snapshots, solution_fn, solver_logfile,
     else:
         logger.warning(f'Optimization failed with status {status} and '
                        f'termination condition {termination_condition}')
+
+    assign_solution(n, snapshots, variables_sol, constraints_dual,
+                        keep_references=keep_references,
+                        keep_shadowprices=keep_shadowprices)
 
     return (status, termination_condition)
 
